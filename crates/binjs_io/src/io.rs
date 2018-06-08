@@ -93,7 +93,31 @@ pub trait TokenReader where Self::Error: Debug + From<::TokenReaderError>,
     /// read (in particular that all bytes were consumed). In most
     /// implementations, failure to do so will raise an assertion.
     fn untagged_tuple(&mut self) -> Result<Self::UntaggedGuard, Self::Error>;
+
+    // Functions for file format dump.
+
+    // Enables/disables dump.
+    fn enable_dump(&mut self);
+    fn disable_dump(&mut self);
+
+    // True if dump is enabled.
+    fn is_dump_enabled(&mut self) -> bool;
+
+    // Prints "# " characters, and padding before it if necessary.
+    fn prepare_code_dump_column(&mut self);
+    fn dump_newline(&mut self);
 }
+
+#[macro_export]
+macro_rules! dump_format(
+    ( $reader:expr, $fmt:expr $( , $more:expr )* ) => (
+        if $reader.is_dump_enabled() {
+            $reader.prepare_code_dump_column();
+            print!( $fmt $( , $more )* );
+            $reader.dump_newline();
+        }
+    )
+);
 
 /// Build an in-memory representation of a BinTree.
 ///

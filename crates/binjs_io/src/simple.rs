@@ -320,6 +320,14 @@ impl<R> TokenReader for TreeTokenReader<R> where R: Read + Seek {
         debug!(target: "simple_reader", "/untagged tuple");
         Ok(UntaggedGuard::new(self.owner.clone()))
     }
+
+    fn enable_dump(&mut self) {}
+    fn disable_dump(&mut self) {}
+    fn is_dump_enabled(&mut self) -> bool {
+        false
+    }
+    fn prepare_code_dump_column(&mut self) {}
+    fn dump_newline(&mut self) {}
 }
 
 /// A trivial tree writer, without any kind of optimization.

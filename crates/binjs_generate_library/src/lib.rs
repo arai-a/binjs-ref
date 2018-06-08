@@ -1,3 +1,6 @@
+//#[macro_use]
+extern crate binjs_io;
+
 extern crate binjs_meta;
 extern crate env_logger;
 extern crate itertools;
@@ -921,8 +924,11 @@ impl<R> Deserializer<R> where R: TokenReader {{
 
 impl<R> InnerDeserialization<R, {name}> for Deserializer<R> where R: TokenReader {{
     fn deserialize_inner(&mut self) -> Result<{name}, R::Error> where R: TokenReader {{
+        dump_format!(self.reader, \"{name} {{{{\");
+{fields_def}
+        dump_format!(self.reader, \"}}}}\");
         Ok({name} {{
-{fields}
+{fields_use}
         }})
     }}
 }}
@@ -944,6 +950,7 @@ impl<R> Deserialization<R, Option<{name}>> for Deserializer<R> where R: TokenRea
             }}
             \"{null}\" => {{
                 debug!(target: \"deserialize_es6\", \"Deserializing optional tuple {name}: absent\");
+                dump_format!(self.reader, \"{name} : None\");
                 Ok(None)
             }},
             _ => {{
@@ -963,10 +970,23 @@ impl<R> Deserialization<R, Option<{name}>> for Deserializer<R> where R: TokenRea
                     null = null_name,
                     lowercase_name = name.to_rust_identifier_case()
                         .trim_right_matches('_'),
-                    fields = interface.contents()
+                    fields_def = interface.contents()
                         .fields()
                         .iter()
-                        .map(|field| format!("            {name}: (self.deserialize() as Result<_, R::Error>)?,",
+                        .map(|field| format!("
+        dump_format!(self.reader, \".{name}\");
+        let data_{name} = (self.deserialize() as Result<{spec}, R::Error>)?;
+",
+                            name = field.name().to_rust_identifier_case(),
+                            spec = match field_specs.get(field.name()) {
+                                Some(s) => s,
+                                None => "???"
+                            }))
+                        .format("\n"),
+                    fields_use = interface.contents()
+                        .fields()
+                        .iter()
+                        .map(|field| format!("            {name}: data_{name},",
                             name = field.name().to_rust_identifier_case()))
                         .format("\n")
                     );

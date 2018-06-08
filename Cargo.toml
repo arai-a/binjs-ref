@@ -41,6 +41,10 @@ path = "src/bin/encode.rs"
 name = "binjs_decode"
 path = "src/bin/decode.rs"
 
+[[bin]]
+name = "binjs_dump"
+path = "src/bin/dump.rs"
+
 [[bench]]
 name = "bench_fb"
 harness = false
