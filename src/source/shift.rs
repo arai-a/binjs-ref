@@ -158,6 +158,10 @@ impl SourceParser for Shift {
             data);
 
         let mut ast = self.parse_script_json_output(&script)?;
+/*
+        println!("Raw AST");
+        println!("{:#}", ast);
+*/
         FromShift.convert(&mut ast);
         Ok(ast)
     }
@@ -178,9 +182,25 @@ impl SourceParser for Shift {
             "##,
             path);
         let mut ast = self.parse_script_json_output(&script)?;
+/*
+        println!("Raw AST");
+        println!("{:#}", ast);
+*/
         FromShift.convert(&mut ast);
         Ok(ast)
     }
+}
+
+#[derive(PartialEq)]
+enum FunctionKind {
+    FunctionDeclaration,
+    Method,
+    FunctionExpression,
+    ArrowExpression,
+    ArrowExpressionWithFunctionBody,
+    ArrowExpressionWithExpression,
+    Getter,
+    Setter,
 }
 
 /// A data structure designed to convert from Shift AST to BinJS AST.
@@ -209,11 +229,119 @@ impl FromShift {
         object.insert("type", json::from(kind));
     }
 
+    fn dummy_declared_scope(&self, name: &str) -> json::JsonValue {
+        let mut scope = Object::new();
+        scope["type"] = json::from(name);
+        scope["declaredNames"] = array![];
+        scope["hasDirectEval"] = JSON::Boolean(true);
+        JSON::Object(scope)
+    }
+
+    fn dummy_parameter_scope(&self, params: &json::JsonValue) -> json::JsonValue {
+        let mut scope = Object::new();
+        scope["type"] = json::from("AssertedParameterScope");
+        scope["boundNames"] = array![];
+        scope["hasDirectEval"] = JSON::Boolean(true);
+
+        let mut is_simple_parameter_list = true;
+        assert!(params["items"].is_array());
+        for item in params["items"].members() {
+            match item["type"].as_str() {
+                Some("BindingIdentifier") => {
+                }
+                _ => {
+                    is_simple_parameter_list = false;
+                    break;
+                }
+            }
+        }
+
+        scope["isSimpleParameterList"] = JSON::Boolean(is_simple_parameter_list);
+        JSON::Object(scope)
+    }
+
+    fn dummy_bound_names_scope(&self) -> json::JsonValue {
+        let mut scope = Object::new();
+        scope["type"] = json::from("AssertedBoundNamesScope");
+        scope["boundNames"] = array![];
+        scope["hasDirectEval"] = JSON::Boolean(true);
+        JSON::Object(scope)
+    }
+
+    fn create_function_contents(&self, object: &mut json::object::Object, kind: FunctionKind) {
+        assert!(kind != FunctionKind::ArrowExpressionWithFunctionBody);
+        assert!(kind != FunctionKind::ArrowExpressionWithExpression);
+        if kind != FunctionKind::Getter && kind != FunctionKind::Setter {
+            // `isAsync` is not supported by the parser yet.
+            if let None = object.get("isAsync") {
+                object["isAsync"] = JSON::Boolean(false)
+            }
+        }
+
+        let directives = if object["body"].has_key("directives") {
+            object["body"].remove("directives")
+        } else {
+            json::JsonValue::new_array()
+        };
+
+        let is_expression_body;
+        let mut body = object.remove("body").unwrap();
+        match body["type"].as_str() {
+            Some("FunctionBody") => {
+                body = body.remove("statements");
+                is_expression_body = false;
+            }
+            _ => {
+                is_expression_body = true;
+            }
+        }
+
+        let mut contents = Object::new();
+        match kind {
+            FunctionKind::FunctionDeclaration | FunctionKind::Method => {
+                contents["type"] = json::from("FunctionOrMethodContents");
+                contents["isThisCaptured"] = JSON::Boolean(false);
+            }
+            FunctionKind::FunctionExpression => {
+                contents["type"] = json::from("FunctionExpressionContents");
+                contents["isFunctionNameCaptured"] = JSON::Boolean(false);
+                contents["isThisCaptured"] = JSON::Boolean(false);
+            }
+            FunctionKind::ArrowExpression => {
+                if is_expression_body {
+                    object["type"] = json::from("ArrowExpressionWithExpression");
+                    contents["type"] = json::from("ArrowExpressionContentsWithExpression");
+                } else {
+                    object["type"] = json::from("ArrowExpressionWithFunctionBody");
+                    contents["type"] = json::from("ArrowExpressionContentsWithFunctionBody");
+                }
+            }
+            FunctionKind::Getter => {
+                contents["type"] = json::from("GetterContents");
+            }
+            FunctionKind::Setter => {
+                contents["type"] = json::from("SetterContents");
+            }
+            _ => {
+                panic!("unexpected FunctionKind");
+            }
+        }
+        if kind != FunctionKind::Getter {
+            contents["params"] = object.remove("params").unwrap();
+            contents["parameterScope"] = self.dummy_parameter_scope(&contents["params"]);
+        }
+        contents["bodyScope"] = self.dummy_declared_scope("AssertedVarScope");
+        contents["body"] = body;
+        object.insert("contents", JSON::Object(contents));
+        object.insert("directives", directives);
+        self.make_eager(object);
+    }
+
     fn convert_object(&self, object: &mut json::object::Object) {
         // By alphabetical order
         match object["type"].as_str() {
             Some("Block") => {
-                object.insert("scope", JSON::Null);
+                object.insert("scope", self.dummy_declared_scope("AssertedBlockScope"));
             }
             Some("BlockStatement") => {
                 // Rewrite
@@ -248,16 +376,23 @@ impl FromShift {
                     object["left"].remove("declarators");
                 }
             }
-            Some("Function") | Some("FunctionDeclaration") | Some("FunctionExpression") | Some("Method")  | Some("ArrowExpression") => {
-                // `isAsync` is not supported by the parser yet.
-                if let None = object.get("isAsync") {
-                    object["isAsync"] = JSON::Boolean(false)
-                }
-                object.insert("scope", JSON::Null);
-                self.make_eager(object);
+            Some("FunctionDeclaration") => {
+                self.create_function_contents(object, FunctionKind::FunctionDeclaration);
             }
-            Some("Getter") | Some("Setter") => {
-                self.make_eager(object);
+            Some("Method") => {
+                self.create_function_contents(object, FunctionKind::Method);
+            }
+            Some("FunctionExpression") => {
+                self.create_function_contents(object, FunctionKind::FunctionExpression);
+            }
+            Some("ArrowExpression") => {
+                self.create_function_contents(object, FunctionKind::ArrowExpression);
+            }
+            Some("Getter") => {
+                self.create_function_contents(object, FunctionKind::Getter);
+            }
+            Some("Setter") => {
+                self.create_function_contents(object, FunctionKind::Setter);
             }
             Some("LabeledStatement") => {
                 // Rewrite type
@@ -281,6 +416,12 @@ impl FromShift {
                     flags.push('u');
                 }
                 object.insert("flags", json::from(flags));
+            }
+            Some("Script") => {
+                object.insert("scope", self.dummy_declared_scope("AssertedScriptGlobalScope"));
+            }
+            Some("CatchClause") => {
+                object.insert("bindingScope", self.dummy_bound_names_scope());
             }
             Some("StaticPropertyName") => {
                 // Change type.
@@ -318,17 +459,48 @@ impl FromShift {
 
 struct ToShift;
 impl ToShift {
-    fn remove_eager_or_skippable(&self, obj: &mut json::object::Object) {
+    fn remove_eager_or_lazy(&self, obj: &mut json::object::Object) {
         let kind = { obj["type"].as_str().unwrap().to_string()  };
         const EAGER : &'static str = "Eager";
-        const SKIPPABLE : &'static str = "Skippable";
+        const LAZY : &'static str = "Lazy";
 
         if kind.starts_with(EAGER) {
             obj["type"] = json::from(&kind[EAGER.len()..])
-        } else if kind.starts_with(SKIPPABLE) {
-            obj["type"] = json::from(&kind[SKIPPABLE.len()..])
+        } else if kind.starts_with(LAZY) {
+            obj["type"] = json::from(&kind[LAZY.len()..])
         } else {
             panic!()
+        }
+    }
+    fn remove_with_suffix(&self, obj: &mut json::object::Object) {
+        let kind = { obj["type"].as_str().unwrap().to_string()  };
+        const WITHFUNCTIONBODY : &'static str = "WithFunctionBody";
+        const WITHEXPRESSION : &'static str = "WithExpression";
+
+        if kind.ends_with(WITHFUNCTIONBODY) {
+            obj["type"] = json::from(&kind[..(kind.len() - WITHFUNCTIONBODY.len())])
+        } else if kind.ends_with(WITHEXPRESSION) {
+            obj["type"] = json::from(&kind[..(kind.len() - WITHEXPRESSION.len())])
+        }
+    }
+    fn remove_function_contents(&self, obj: &mut json::object::Object, kind: FunctionKind) {
+        self.remove_eager_or_lazy(obj);
+        self.remove_with_suffix(obj);
+
+        obj.remove("scope");
+        obj.remove("contents_skip");
+
+        let mut contents = obj.remove("contents").unwrap();
+        obj["params"] = contents.remove("params");
+
+        if kind == FunctionKind::ArrowExpressionWithExpression {
+            obj["body"] = contents.remove("body");
+        } else {
+            let mut body = Object::new();
+            body["type"] = json::from("FunctionBody");
+            body["directives"] = obj.remove("directives").unwrap();
+            body["statements"] = contents.remove("body");
+            obj["body"] = JSON::Object(body);
         }
     }
 }
@@ -381,6 +553,14 @@ impl MutASTVisitor for ToShift {
                 // - `object` is `VariableDeclarationStatement`.
                 // - `insert` is `VariableDeclaration`.
                 object["declaration"] = JSON::Object(insert);
+            }
+            (_, "Script", &mut JSON::Object(ref mut object)) => {
+                // Change type.
+                object.remove("scope");
+            }
+            (_, "CatchClause", &mut JSON::Object(ref mut object)) => {
+                // Change type.
+                object.remove("bindingScope");
             }
             (_, "LabelledStatement", &mut JSON::Object(ref mut object)) => {
                 // Change type.
@@ -444,19 +624,32 @@ impl MutASTVisitor for ToShift {
                 ];
             }
             (_, "EagerFunctionExpression", &mut JSON::Object(ref mut object))
-            | (_, "SkippableFunctionExpression", &mut JSON::Object(ref mut object))
-            | (_, "EagerFunctionDeclaration", &mut JSON::Object(ref mut object))
-            | (_, "SkippableFunctionDeclaration", &mut JSON::Object(ref mut object))
-            | (_, "EagerMethod", &mut JSON::Object(ref mut object))
-            | (_, "SkippableMethod", &mut JSON::Object(ref mut object))
-            | (_, "EagerGetter", &mut JSON::Object(ref mut object))
-            | (_, "SkippableGetter", &mut JSON::Object(ref mut object))
-            | (_, "EagerSetter", &mut JSON::Object(ref mut object))
-            | (_, "SkippableSetter", &mut JSON::Object(ref mut object))
-            | (_, "EagerArrowExpression", &mut JSON::Object(ref mut object))
-            | (_, "SkippableArrowExpression", &mut JSON::Object(ref mut object))
-             => {
-                 self.remove_eager_or_skippable(object);
+            | (_, "LazyFunctionExpression", &mut JSON::Object(ref mut object))=> {
+                self.remove_function_contents(object, FunctionKind::FunctionExpression);
+            }
+            (_, "EagerFunctionDeclaration", &mut JSON::Object(ref mut object))
+            | (_, "LazyFunctionDeclaration", &mut JSON::Object(ref mut object)) => {
+                self.remove_function_contents(object, FunctionKind::FunctionDeclaration);
+            }
+            (_, "EagerMethod", &mut JSON::Object(ref mut object))
+            | (_, "LazyMethod", &mut JSON::Object(ref mut object)) => {
+                self.remove_function_contents(object, FunctionKind::Method);
+            }
+            (_, "EagerGetter", &mut JSON::Object(ref mut object))
+            | (_, "LazyGetter", &mut JSON::Object(ref mut object)) => {
+                self.remove_function_contents(object, FunctionKind::Getter);
+            }
+            (_, "EagerSetter", &mut JSON::Object(ref mut object))
+            | (_, "LazySetter", &mut JSON::Object(ref mut object)) => {
+                self.remove_function_contents(object, FunctionKind::Setter);
+            }
+            (_, "EagerArrowExpressionWithFunctionBody", &mut JSON::Object(ref mut object))
+            | (_, "LazyArrowExpressionWithFunctionBody", &mut JSON::Object(ref mut object)) => {
+                self.remove_function_contents(object, FunctionKind::ArrowExpressionWithFunctionBody);
+            }
+            (_, "EagerArrowExpressionWithExpression", &mut JSON::Object(ref mut object))
+            | (_, "LazyArrowExpressionWithExpression", &mut JSON::Object(ref mut object)) => {
+                self.remove_function_contents(object, FunctionKind::ArrowExpressionWithExpression);
             }
             _ => {
                 // Nothing to do.

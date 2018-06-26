@@ -136,6 +136,14 @@ fn handle_path<'a>(options: &Options<'a>,
     println!("Parsing.");
     let json = options.parser.parse_file(source_path)
         .expect("Could not parse source");
+
+/*
+    if options.show_ast {
+        println!("AST before import");
+        println!("{:#}", json);
+    }
+*/
+
     let mut ast = binjs::specialized::es6::ast::Script::import(&json)
         .expect("Could not import AST");
     binjs::specialized::es6::scopes::AnnotationVisitor::new()
@@ -144,7 +152,7 @@ fn handle_path<'a>(options: &Options<'a>,
     if options.lazification > 0 {
         println!("Introducing laziness.");
         let mut path = binjs::specialized::es6::ast::Path::new();
-        let mut visitor = binjs::specialized::es6::skip::LazifierVisitor::new(options.lazification);
+        let mut visitor = binjs::specialized::es6::lazy::LazifierVisitor::new(options.lazification);
         ast.walk(&mut path, &mut visitor)
             .expect("Could not introduce laziness");
     }
