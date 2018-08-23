@@ -168,6 +168,8 @@ pub enum TypeSpec {
     /// A number, as per JavaScript specifications.
     Number,
 
+    UnsignedLong,
+
     /// A number of bytes in the binary file.
     ///
     /// This spec is used only internally, as a hidden
@@ -280,6 +282,7 @@ impl TypeSpec {
             TypeSpec::Boolean => Some(IsNullable::non_nullable(Primitive::Boolean)),
             TypeSpec::Void => Some(IsNullable::non_nullable(Primitive::Void)),
             TypeSpec::Number => Some(IsNullable::non_nullable(Primitive::Number)),
+            TypeSpec::UnsignedLong => Some(IsNullable::non_nullable(Primitive::UnsignedLong)),
             TypeSpec::String => Some(IsNullable::non_nullable(Primitive::String)),
             TypeSpec::Offset => Some(IsNullable::non_nullable(Primitive::Offset)),
             TypeSpec::NamedType(ref name) => {
@@ -316,6 +319,7 @@ pub enum Primitive {
     Boolean,
     Void,
     Number,
+    UnsignedLong,
     Offset,
     Interface(Rc<Interface>),
 }
@@ -369,6 +373,9 @@ impl Type {
     }
     pub fn number() -> TypeSpec {
         TypeSpec::Number
+    }
+    pub fn unsigned_long() -> TypeSpec {
+        TypeSpec::UnsignedLong
     }
     pub fn bool() -> TypeSpec {
         TypeSpec::Boolean
@@ -745,7 +752,7 @@ impl SpecBuilder {
                         debug!(target: "spec", "classify_type => don't put me in an interface");
                         TypeClassification::Array
                     },
-                    TypeSpec::Boolean | TypeSpec::Number | TypeSpec::String | TypeSpec::Void | TypeSpec::Offset => {
+                    TypeSpec::Boolean | TypeSpec::Number | TypeSpec::UnsignedLong | TypeSpec::String | TypeSpec::Void | TypeSpec::Offset => {
                         debug!(target: "spec", "classify_type => don't put me in an interface");
                         TypeClassification::Primitive
                     }
