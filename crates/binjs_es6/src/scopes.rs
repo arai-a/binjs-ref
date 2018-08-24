@@ -24,7 +24,6 @@ struct VarAndLexNames {
 }
 
 enum ParamKind {
-    FunctionName { name: String },
     Positional { index: u32, name: String },
     Destructuring { name: String },
     Rest { name: String },
@@ -272,7 +271,6 @@ impl AnnotationVisitor {
     fn pop_param_names(&mut self) -> Vec<AssertedMaybePositionalParameterName> {
         fn to_name(param: &ParamKind) -> String {
             match param {
-                ParamKind::FunctionName { name } => name.clone(),
                 ParamKind::Positional { index: _, name } => name.clone(),
                 ParamKind::Destructuring { name } => name.clone(),
                 ParamKind::Rest { name } => name.clone(),
@@ -299,12 +297,6 @@ impl AnnotationVisitor {
         for param in params.into_iter() {
             let is_captured = captured_names.contains(&to_name(&param));
             param_names.push(match param {
-                // FIXME: Function name shouldn't be here.
-                // https://github.com/binast/binjs-ref/issues/151
-                ParamKind::FunctionName { name } => AssertedMaybePositionalParameterName::AssertedParameterName(Box::new(AssertedParameterName {
-                    name,
-                    is_captured
-                })),
                 ParamKind::Positional { index, name } => AssertedMaybePositionalParameterName::AssertedPositionalParameterName(Box::new(AssertedPositionalParameterName {
                     index,
                     name,
@@ -791,11 +783,7 @@ impl Visitor<()> for AnnotationVisitor {
         Ok(VisitMe::HoldThis(()))
     }
     fn exit_function_expression_contents(&mut self, path: &Path, node: &mut FunctionExpressionContents) -> Result<Option<FunctionExpressionContents>, ()> {
-        // If the function has a name, it's a parameter.
         if let Some(ref name) = self.function_expression_name() {
-            self.params_stack.last_mut()
-                .unwrap()
-                .push(ParamKind::FunctionName { name: name.clone() });
             node.is_function_name_captured = self.pop_function_name_captured(name.clone());
         } else {
             node.is_function_name_captured = false;
