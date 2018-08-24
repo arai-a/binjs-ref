@@ -229,9 +229,10 @@ impl FromShift {
         JSON::Object(scope)
     }
 
-    fn dummy_parameter_scope<'a, I>(&self, params: I) -> json::JsonValue
+    fn parameter_scope_and_length<'a, I>(&self, params: I) -> (json::JsonValue, json::JsonValue)
     where I: IntoIterator<Item=&'a json::JsonValue> {
         let mut scope = Object::new();
+        let mut length = 0;
         scope["type"] = json::from("AssertedParameterScope");
         scope["paramNames"] = array![];
         scope["hasDirectEval"] = JSON::Boolean(false);
@@ -240,6 +241,12 @@ impl FromShift {
         for item in params {
             match item["type"].as_str() {
                 Some("BindingIdentifier") => {
+                    length += 1;
+                }
+                Some("ObjectBinding") |
+                Some("ArrayBinding") => {
+                    is_simple_parameter_list = false;
+                    length += 1;
                 }
                 _ => {
                     is_simple_parameter_list = false;
@@ -250,7 +257,7 @@ impl FromShift {
 
         scope["isSimpleParameterList"] = JSON::Boolean(is_simple_parameter_list);
 
-        JSON::Object(scope)
+        (JSON::Object(scope), json::from(length))
     }
 
     fn dummy_bound_names_scope(&self) -> json::JsonValue {
@@ -324,11 +331,15 @@ impl FromShift {
         if kind != FunctionKind::Getter {
             if kind == FunctionKind::Setter {
                 contents["param"] = object.remove("param").unwrap();
-                contents["parameterScope"] = self.dummy_parameter_scope(vec![&contents["param"]]);
+                let (scope, length) = self.parameter_scope_and_length(vec![&contents["param"]]);
+                contents["parameterScope"] = scope;
+                object["length"] = length;
             } else {
                 contents["params"] = object.remove("params").unwrap();
                 assert!(contents["params"]["items"].is_array());
-                contents["parameterScope"] = self.dummy_parameter_scope(contents["params"]["items"].members());
+                let (scope, length) = self.parameter_scope_and_length(contents["params"]["items"].members());
+                contents["parameterScope"] = scope;
+                object["length"] = length;
             }
         }
         contents["bodyScope"] = self.dummy_declared_scope("AssertedVarScope");
@@ -492,6 +503,7 @@ impl ToShift {
         obj.remove("isAsync");
         obj.remove("scope");
         obj.remove("contents_skip");
+        obj.remove("length");
 
         // Move some fields back from *Contents.
         let mut contents = obj.remove("contents").unwrap();
