@@ -29,10 +29,15 @@ fn main() {
             Arg::with_name("dump")
                 .long("dump")
                 .takes_value(false)
-                .help("If specified, dump a JSON version of the AST.")
+                .help("If specified, dump a JSON version of the AST."),
+            Arg::with_name("quiet")
+                .long("quiet")
+                .short("q")
+                .help("Do not print progress"),
         ])
     .get_matches();
 
+    let quiet = matches.is_present("quiet");
     let source_path = matches.value_of("INPUT")
         .expect("Expected input file");
     let dest_path = matches.value_of("OUTPUT")
@@ -41,18 +46,24 @@ fn main() {
     // Setup.
     let printer = Shift::new();
 
-    println!("Reading.");
+    if !quiet {
+        println!("Reading.");
+    }
     let file = File::open(source_path)
         .expect("Could not open source");
     let stream = BufReader::new(file);
 
-    println!("Attempting to decode as multipart.");
+    if !quiet {
+        println!("Attempting to decode as multipart.");
+    }
     let tree : binjs::specialized::es6::ast::Script = if let Ok(reader) = binjs::io::multipart::TreeTokenReader::new(stream) {
         let mut deserializer = binjs::specialized::es6::io::Deserializer::new(reader);
         deserializer.deserialize()
             .expect("Could not decode")
     } else {
-        println!("... falling back to simple format.");
+        if !quiet {
+            println!("... falling back to simple format.");
+        }
 
         let file = File::open(source_path)
             .expect("Could not open source");
@@ -71,7 +82,9 @@ fn main() {
         println!("{}", pretty);
     }
 
-    println!("Pretty-printing");
+    if !quiet {
+        println!("Pretty-printing");
+    }
     let mut builder = binjs::meta::spec::SpecBuilder::new();
     let _ = binjs::generic::es6::Library::new(&mut builder);
     let spec_options = binjs::meta::spec::SpecOptions {
@@ -82,7 +95,9 @@ fn main() {
     let source = printer.to_source(&spec, &json)
         .expect("Could not pretty-print");
 
-    println!("Writing.");
+    if !quiet {
+        println!("Writing.");
+    }
     let mut dest = File::create(dest_path)
         .expect("Could not create destination file");
     dest.write(source.as_bytes())
